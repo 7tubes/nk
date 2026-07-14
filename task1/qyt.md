@@ -41,8 +41,7 @@ def preprocess_roi(roi_gray, config: dict):
 3. 用 Gaussian blur 或 median blur 去除噪声。
 4. 做背景校正：
    - 用较大核的 Gaussian blur 得到背景图；
-   - 用原图减背景图；
-   - 再把结果归一化回 `0-255`。
+2   - 再把结果归一化回 `0-255`。
 5. 用 CLAHE 增强局部对比度。
 
 预期效果：
