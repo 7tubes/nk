@@ -297,3 +297,115 @@ python scripts/review_results.py --csv outputs/morphology_scores.csv --per-grade
 - 等 dzh 的批处理主流程完成后，把 `compute_features()`、`score_features()` 和 `save_overlay()` 接入 `batch_run.py`。
 - 等真实数据跑出第一批结果后，根据人工复核结果调整 `fit_iou_good/bad`、`uniformity_good/bad`、面积阈值和长宽比目标值。
 - 如果传统分割产生较多边界异常，需要和 qyt 对齐 mask 质量控制规则，避免尾部粘连或重叠杂质进入高等级样本。
+
+7.15：qyt：
+今天在 7.14 已完成的 ROI 预处理和阈值候选生成基础上，继续补全了 qyt 作业单中剩余的核心部分，并对代码接口进行了整理，使我的分割输出可以直接衔接 ljr 的 `features.py`、`scoring.py` 和 `visualize.py`。
+
+主要更新文件：
+
+1）`nk/src/sperm_morphology/preprocess.py`
+
+作用：
+继续作为 ROI 预处理模块，输入 dzh 裁剪得到的 ROI，输出增强后的灰度图。
+
+本次整合内容：
+- 现在既可以接收完整配置 `config`，也可以只接收 `config["preprocess"]`。
+- 这样 dzh 主流程中直接传总配置时，预处理参数仍然能正确读取。
+
+输入：
+- `roi_gray`：原始 ROI 图像。
+- `config`：完整配置或预处理配置。
+
+输出：
+- `enhanced_roi`：`uint8` 单通道增强灰度图。
+
+2）`nk/src/sperm_morphology/segment_head.py`
+
+作用：
+该文件现在负责从预处理后的 ROI 中得到最终精子头部 mask，并给出分割质量信息。
+
+目前包含的主要函数：
+
+`threshold_candidates(roi_pre, config)`
+- 输入：预处理后的 ROI。
+- 输出：4 种二值候选 mask，包括 Otsu 正向、Otsu 反向、自适应正向、自适应反向。
+
+`clean_binary_mask(mask, config)`
+- 输入：单个二值候选 mask。
+- 处理：开运算去噪、闭运算补孔、轻微腐蚀尝试断开尾部、必要膨胀恢复边界。
+- 输出：清理后的二值 mask。
+
+`extract_candidate_regions(mask, target_bbox_local, config)`
+- 输入：清理后的 mask 和目标 bbox 在 ROI 中的局部坐标。
+- 输出：候选连通域列表，每个候选包含面积、外接框、中心点、是否能拟合椭圆、长短轴比、失败原因等信息。
+
+`score_region_candidate(region, target_bbox_local, config)`
+- 输入：单个候选区域。
+- 输出：`0-1` 范围的质量分。
+- 评分依据包括面积是否合理、是否靠近目标框中心、椭圆长短轴比是否合理、区域填充度是否像头部。
+
+`segment_head(roi_pre, target_bbox_local, config)`
+- 输入：
+  - `roi_pre`：预处理后的 ROI。
+  - `target_bbox_local`：目标框在 ROI 内的局部坐标。
+  - `config`：完整配置或分割配置。
+- 输出：
+  - `head_mask`：最终选出的精子头部二值 mask，失败时为 `None`。
+  - `quality_info`：分割质量信息。
+
+成功时 `quality_info` 示例：
+
+```python
+{
+    "success": True,
+    "method": "otsu_binary_inv",
+    "region_score": 0.83,
+    "area": 42,
+    "reason": "",
+    "bbox": [x1, y1, x2, y2],
+    "center": [cx, cy],
+    "axis_ratio": 1.7,
+    "mask_path": "",
+}
+```
+
+失败时支持的原因包括：
+- `no_foreground`
+- `no_valid_contour`
+- `area_too_small`
+- `area_too_large`
+- `cannot_fit_ellipse`
+- `tail_connected`
+- `overlap_or_debris`
+
+`save_mask_result(head_mask, quality_info, config, image_id, target_id)`
+- 作用：将成功或失败的 mask 保存到 `outputs/masks/`。
+- 输出：mask 保存路径，并写回 `quality_info["mask_path"]`。
+
+3）`nk/src/sperm_morphology/utils.py`
+
+作用：
+继续作为公共工具模块，避免 `preprocess.py` 和 `segment_head.py` 重复写输入检查、灰度归一化和卷积核处理代码。
+
+当前整体接口衔接：
+
+```python
+roi_pre = preprocess_roi(roi, config)
+head_mask, quality_info = segment_head(roi_pre, target_bbox_local, config)
+
+features = compute_features(head_mask, roi_pre, config)
+scores = score_features(features, config)
+overlay_path = save_overlay(image, roi_info, head_mask, features, scores, config)
+```
+
+当前完成进度：
+- 已完成作业 1：ROI 预处理。
+- 已完成作业 2：四种阈值分割候选。
+- 已完成作业 3：二值 mask 形态学清理。
+- 已完成作业 4：候选连通域提取与质量评分。
+- 已完成作业 5：统一头部分割主函数 `segment_head()`。
+- 已完成作业 6：mask 保存函数 `save_mask_result()`。
+
+后续工作计划：
+- 等 dzh 的批处理主流程完成后，把 `preprocess_roi()`、`segment_head()`、`save_mask_result()` 接入批处理循环。
+- 用真实 ROI 跑一批结果后，根据失败原因统计调整面积阈值、形态学核大小和长短轴比范围。

@@ -31,9 +31,9 @@ def preprocess_roi(roi_gray, config: dict):
             uint8 单通道灰度图
     """
 
-    # 防止 config 传入 None
     if config is None:
         config = {}
+    preprocess_config = config.get("preprocess", config)
 
     # 1. 确保输入图像为单通道 uint8 灰度图
     gray = normalize_gray_uint8(roi_gray, name="roi_gray")
@@ -43,19 +43,19 @@ def preprocess_roi(roi_gray, config: dict):
     # gaussian：高斯噪声，图像更加平滑
     # median：椒盐噪声，边缘保留
     noise_filter = str(
-        config.get("noise_filter", "gaussian")
+        preprocess_config.get("noise_filter", "gaussian")
     ).lower()
 
     # 去噪卷积核大小，默认使用 3×3
     noise_kernel = ensure_odd_kernel(
-        config.get("noise_kernel", 3),
+        preprocess_config.get("noise_kernel", preprocess_config.get("gaussian_kernel", 3)),
         default_value=3
     )
 
     if noise_filter == "gaussian":
         # Gaussian 标准差，设置为 0 时由 OpenCV 自动计算
         noise_sigma = float(
-            config.get("noise_sigma", 0)
+            preprocess_config.get("noise_sigma", 0)
         )
 
         denoised = cv2.GaussianBlur(
@@ -79,7 +79,7 @@ def preprocess_roi(roi_gray, config: dict):
     # 4. 背景校正
     # 使用较大的 Gaussian 卷积核得到缓慢变化的背景亮度图
     background_kernel = ensure_odd_kernel(
-        config.get("background_kernel", 31),
+        preprocess_config.get("background_kernel", preprocess_config.get("background_blur_kernel", 31)),
         default_value=31
     )
 
@@ -104,7 +104,7 @@ def preprocess_roi(roi_gray, config: dict):
 
     # 背景模糊的标准差，0 表示由 OpenCV 自动计算
     background_sigma = float(
-        config.get("background_sigma", 0)
+        preprocess_config.get("background_sigma", 0)
     )
 
     # 得到背景亮度图
@@ -117,7 +117,7 @@ def preprocess_roi(roi_gray, config: dict):
 
     # 背景校正方法
     background_method = str(
-        config.get("background_method", "divide")
+        preprocess_config.get("background_method", "divide")
     ).lower()
 
     # 转换为 float32，避免计算时发生 uint8 溢出
@@ -166,13 +166,13 @@ def preprocess_roi(roi_gray, config: dict):
     # 5. 使用 CLAHE 增强局部对比度
     # clipLimit 越大，对比度增强越明显，但过大可能同时放大噪声。
     clahe_clip_limit = float(
-        config.get("clahe_clip_limit", 2.0)
+        preprocess_config.get("clahe_clip_limit", 2.0)
     )
 
     # CLAHE 将图像划分为多个小网格分别增强
-    clahe_grid_size = config.get(
+    clahe_grid_size = preprocess_config.get(
         "clahe_grid_size",
-        (8, 8)
+        preprocess_config.get("clahe_tile_grid_size", (8, 8))
     )
 
     # 如果只传入一个整数，例如 8，则自动转换成 (8, 8)
