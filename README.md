@@ -1,5 +1,5 @@
 working station：（y/n）
-qyt：y
+qyt：n
 ljr：n
 dzh：n
 
