@@ -130,3 +130,170 @@ task：
 - 在任务三中继续实现二值 mask 的形态学清理，例如开运算、闭运算、轻微腐蚀和膨胀。
 - 在任务四中继续实现候选连通域筛选，从多个 mask 中选出最像精子头部的区域。
 - 最终将输出的 head mask 交给 ljr，用于计算 L、W、R、SAS、LAS、HA、HD 等形态特征。
+
+7.15：ljr：
+今天主要完成精子形态筛选任务中“形态特征计算”“评分分级”“可视化复核”和“结果抽查脚本”四部分代码。我的工作重点是把 qyt 输出的精子头部二值 mask 转换成可解释的形态学指标，再根据拟合优度、长轴比和均匀度进行量化评分，最后生成 overlay 图，方便人工检查分割和评分是否合理。
+
+目前主要编写和整理了以下 4 个 Python 文件：
+
+1）`nk/src/sperm_morphology/features.py`
+
+作用：
+该文件负责从精子头部 `head_mask` 和预处理后的 `roi_pre` 中提取形态学特征。它是后续评分分级的基础模块，主要把二值 mask 转换成 L、W、R、SAS、LAS、HA、HD、fit_iou、gray_uniformity 和 uniformity 等指标。
+
+核心函数：
+`compute_features(head_mask, roi_pre, config)`
+
+输入：
+- `head_mask`：qyt 分割得到的精子头部二值 mask。
+- `roi_pre`：qyt 预处理后的 ROI 灰度图。
+- `config`：配置字典，包括显微镜标定、面积阈值和评分相关参数等。
+
+主要处理流程：
+- 使用 `find_head_contour()` 从 head mask 中寻找最大外轮廓。
+- 使用 `fit_head_ellipse()` 对头部轮廓进行椭圆拟合，并保证长轴 `L` 大于等于短轴 `W`。
+- 计算基础形态指标：`L_px`、`W_px`、`R`、`HA_px2`、`HD_px`。
+- 如果 `config["calibration"]["um_per_pixel"]` 存在，则额外输出 `L_um`、`W_um`、`HA_um2`、`HD_um`，不伪造微米单位。
+- 根据椭圆角度把 mask 旋转到主轴坐标系，计算短轴对称性 `SAS` 和长轴对称性 `LAS`。
+- 生成拟合椭圆 mask，计算 head mask 和椭圆 mask 的 IoU，得到 `fit_iou`。
+- 在 head mask 内统计灰度均匀度 `gray_uniformity`，并结合 `min(SAS, LAS)` 得到综合均匀度 `uniformity`。
+
+失败处理：
+- mask 为空时返回 `empty_mask`。
+- 找不到轮廓时返回 `no_contour`。
+- 轮廓点数小于 5 时返回 `not_enough_contour_points`。
+- 椭圆拟合失败时返回 `ellipse_fit_failed`。
+- 短轴过小时返回 `minor_axis_too_small`。
+- mask 和 ROI 尺寸不一致时返回 `shape_mismatch`。
+
+输出：
+成功时返回包含 `success=True`、椭圆信息和全部形态指标的字典；失败时返回：
+
+```python
+{
+    "success": False,
+    "reason": "ellipse_fit_failed",
+}
+```
+
+预期效果：
+- 对每个成功 mask 都能稳定得到头部中心、长轴、短轴、角度和面积等基础形态指标。
+- 可以量化头部是否接近椭圆、是否对称、内部灰度是否均匀。
+- 给后续 `scoring.py` 提供稳定字段，方便 dzh 写入 CSV。
+
+2）`nk/src/sperm_morphology/scoring.py`
+
+作用：
+该文件负责把 `features.py` 输出的连续形态指标转换成 0-100 分的子评分、总分和 A/B/C/D/Reject 等级。评分维度对应方案中的三项：拟合优度、长轴比和均匀度。
+
+核心函数：
+`score_features(features, config)`
+
+输入：
+- `features`：`compute_features()` 输出的特征字典。
+- `config`：评分配置字典，支持从 `config["scoring"]` 读取权重、阈值和等级分界线。
+
+主要评分公式：
+- `fit_score = clamp((fit_iou - 0.60) / (0.85 - 0.60), 0, 1) * 100`
+- `axis_score = clamp(1 - abs(R - 1.62) / 0.35, 0, 1) * 100`
+- `uniformity_score = clamp((uniformity - 0.60) / (0.85 - 0.60), 0, 1) * 100`
+- `total_score = 0.40 * fit_score + 0.30 * axis_score + 0.30 * uniformity_score`
+
+硬性剔除条件：
+- 特征计算失败：`Reject`。
+- 头部面积 `HA_px2` 小于最小阈值：`area_too_small`。
+- 头部面积 `HA_px2` 大于最大阈值：`area_too_large`。
+- 长宽比 `R` 极端异常：`axis_ratio_extreme`。
+- `min(SAS, LAS) < 0.55`：`low_symmetry`。
+- `fit_iou < 0.50`：`bad_fit`。
+
+输出字段：
+- `fit_score`
+- `axis_score`
+- `uniformity_score`
+- `total_score`
+- `grade`
+- `reject_reason`
+
+预期效果：
+- 正常样本输出 A/B/C/D 等级。
+- 明显异常样本直接进入 Reject，不强行给普通等级。
+- 后续调阈值时只需要改配置，不需要改评分代码。
+
+3）`nk/src/sperm_morphology/visualize.py`
+
+作用：
+该文件负责把每个候选精子的检测、分割、拟合和评分结果画回原图，保存为 overlay 图，供人工复核。
+
+核心函数：
+`save_overlay(image, roi_info, head_mask, features, scores, config)`
+
+输入：
+- `image`：原始整图。
+- `roi_info`：dzh 裁剪 ROI 时返回的坐标映射信息。
+- `head_mask`：qyt 输出的头部 mask。
+- `features`：ljr 计算出的形态特征。
+- `scores`：ljr 计算出的评分和等级。
+- `config`：配置字典，主要用于读取输出目录。
+
+overlay 图中绘制内容：
+- 原始 ROI 范围。
+- 目标 bbox。
+- 头部轮廓。
+- 拟合椭圆。
+- 椭圆长轴和短轴。
+- `grade` 和 `total_score`。
+
+输出位置：
+默认保存到：
+
+```text
+outputs/overlays/
+```
+
+命名方式：
+- 成功样本：`sample_target0_A_91.2.png`
+- 剔除样本：`sample_target0_Reject_bad_fit.png`
+
+预期效果：
+- 人工打开 overlay 图后，可以直接看到 bbox、mask、椭圆和评分是否一致。
+- 当分数异常时，可以快速判断问题来自分割、椭圆拟合还是评分阈值。
+- 为后续人工抽查和调参提供直观依据。
+
+4）`nk/scripts/review_results.py`
+
+作用：
+该脚本用于复核批处理输出的 `morphology_scores.csv`，快速统计等级分布和 Reject 原因，并随机列出每个等级的 overlay 路径供人工抽查。
+
+运行方式：
+
+```bash
+python scripts/review_results.py --csv outputs/morphology_scores.csv --per-grade 20
+```
+
+主要功能：
+- 读取 `outputs/morphology_scores.csv`。
+- 统计 A/B/C/D/Reject 的数量。
+- 统计 Reject 的失败原因分布。
+- 按等级随机抽取若干张 overlay，打印路径给人工检查。
+
+预期效果：
+- 能快速知道当前阈值下优质、可疑和剔除样本比例。
+- 能发现主要失败原因，例如 `bad_fit`、`low_symmetry` 或 `area_too_small`。
+- 能帮助后续判断是需要找 qyt 调分割，还是需要调整 ljr 的评分阈值。
+
+当前完成进度：
+- 已完成作业 1：`features.py` 中的轮廓提取和椭圆拟合。
+- 已完成作业 2：基础形态指标 L、W、R、HA、HD 计算。
+- 已完成作业 3：SAS 和 LAS 对称性指标计算。
+- 已完成作业 4：拟合优度 fit_iou、灰度均匀度 gray_uniformity 和综合均匀度 uniformity 计算。
+- 已完成作业 5：统一总特征函数 `compute_features()`。
+- 已完成作业 6：`scoring.py` 中的三项子评分、总分、等级和 Reject 规则。
+- 已完成作业 7：明确了 CSV 中需要保留 `mask_path`、`overlay_path` 和 `reject_reason`，便于 dzh 主流程写表。
+- 已完成作业 8：`visualize.py` 中的 overlay 保存函数。
+- 已完成作业 9：`review_results.py` 复核脚本。
+
+后续工作计划：
+- 等 dzh 的批处理主流程完成后，把 `compute_features()`、`score_features()` 和 `save_overlay()` 接入 `batch_run.py`。
+- 等真实数据跑出第一批结果后，根据人工复核结果调整 `fit_iou_good/bad`、`uniformity_good/bad`、面积阈值和长宽比目标值。
+- 如果传统分割产生较多边界异常，需要和 qyt 对齐 mask 质量控制规则，避免尾部粘连或重叠杂质进入高等级样本。
