@@ -409,3 +409,218 @@ overlay_path = save_overlay(image, roi_info, head_mask, features, scores, config
 后续工作计划：
 - 等 dzh 的批处理主流程完成后，把 `preprocess_roi()`、`segment_head()`、`save_mask_result()` 接入批处理循环。
 - 用真实 ROI 跑一批结果后，根据失败原因统计调整面积阈值、形态学核大小和长短轴比范围。
+
+7.16：dzh:
+今天主要完成精子形态筛选任务中“数据读取”“ROI 裁剪”“批处理流程搭建”和“项目配置管理”部分代码。我的工作重点是搭建整个形态筛选流程的数据入口和运行框架，使后续 qyt 的精子头部分割模块以及 ljr 的形态特征计算、评分模块能够通过统一接口接入，实现完整批处理流程。
+
+目前主要编写和整理了以下文件：
+
+1）`nk/configs/morphology.yaml`
+
+作用：
+
+该文件作为整个精子形态筛选项目的统一配置文件，用于集中管理数据路径、ROI 裁剪参数、图像预处理参数、分割参数和评分参数。
+
+主要内容包括：
+
+- 数据集图像和标签路径配置。
+- ROI 裁剪扩展边距和尺寸限制。
+- 图像预处理相关参数。
+- 精子头部分割相关阈值参数。
+- 形态评分权重和等级划分阈值。
+
+预期效果：
+
+- 后续调整路径和算法参数时无需修改源码，只需要修改配置文件。
+- qyt 和 ljr 模块可以读取同一份配置，实现参数统一管理。
+- 方便后续整体流程调试和参数优化。
+
+2）`nk/src/sperm_morphology/dataset.py`
+
+作用：
+
+该文件负责读取原始图像和标签文件，是整个精子形态筛选流程的数据入口模块。
+
+核心函数：
+
+`load_config(config_path)`
+
+- 读取 `morphology.yaml` 配置文件。
+
+`list_image_label_pairs(config)`
+
+- 遍历 `image_dir` 下的所有图像文件。
+- 根据图像名称寻找对应的 `.txt` 标签文件。
+- 建立图像与标签之间的对应关系。
+
+`parse_label_file(label_path)`
+
+- 按照当前数据集标签格式：
+
+```text
+id x1 y1 x2 y2
+```
+
+解析每个候选精子的目标编号和 bbox 坐标。
+
+- 对空标签、格式错误、非法坐标等情况进行异常处理。
+
+`load_dataset(config)`
+
+输出统一样本格式：
+
+```python
+{
+    "image_id": "0000",
+    "image_path": "...",
+    "label_path": "...",
+    "target_id": 0,
+    "bbox": [x1,y1,x2,y2]
+}
+```
+
+预期效果：
+
+- 能稳定读取数据集。
+- 单个异常标签不会导致整个流程中断。
+- 为后续 ROI 裁剪提供统一输入。
+
+3）`nk/src/sperm_morphology/crop.py`
+
+作用：
+
+该文件负责根据 `dataset.py` 输出的 bbox 信息裁剪单个精子候选 ROI，并完成原图坐标与 ROI 局部坐标之间的转换。
+
+核心函数：
+
+`clamp_bbox()`
+
+- 将 bbox 限制在原始图像范围内。
+- 避免裁剪过程中出现越界。
+
+`expand_bbox()`
+
+- 在目标框四周增加一定像素范围。
+- 保留目标周围背景信息，提高后续精子头部分割稳定性。
+
+`crop_roi()`
+
+输出：
+
+```python
+{
+    "roi": roi_image,
+    "roi_bbox_global": [rx1, ry1, rx2, ry2],
+    "target_bbox_local": [x1, y1, x2, y2]
+}
+```
+
+其中：
+
+- `roi` 提供给 qyt 进行预处理和分割。
+- `target_bbox_local` 用于 ROI 内候选区域筛选。
+- `roi_bbox_global ` 用于后续 overlay 绘制。
+
+4）`nk/src/sperm_morphology/batch_run.py`
+
+作用：
+
+该文件负责整个精子形态筛选流程的批处理调度，将 `dzh`、`qyt` 和 `ljr` 三个人的模块连接起来，实现从图像读取、ROI 裁剪、头部分割、特征计算到评分保存的完整流程。
+
+核心函数：
+
+`run_batch(config_path)`
+
+主要处理流程：
+
+- 读取配置文件，并加载图像和标签数据。
+- 自动创建 `outputs/` 下的结果目录。
+- 遍历所有候选精子目标。
+- 根据 bbox 信息裁剪 ROI。
+- 调用 `preprocess_roi()` 和 `segment_head()` 获取头部 mask。
+- 调用 `compute_features()` 计算形态指标。
+- 调用 `score_features()` 完成评分和等级划分。
+- 调用 `save_overlay()` 保存可视化结果。
+- 最终生成结果 CSV 文件。
+
+模块接口：
+
+提供给 qyt：
+
+```python
+roi_info["roi"]
+roi_info["target_bbox_local"]
+config
+```
+
+接收：
+
+```python
+mask
+quality_info
+```
+
+提供给 ljr：
+
+```python
+mask
+roi_pre
+roi_info
+sample
+config
+```
+
+接收：
+
+```python
+features
+scores
+overlay_path
+```
+
+结果保存：
+
+成功样本保存至：
+
+```text
+outputs/morphology_scores.csv
+```
+
+失败样本保存至：
+
+```text
+outputs/failed_cases.csv
+```
+
+5）`nk/scripts/run_morphology_screening.py`
+
+作用：
+
+该文件负责提供整个精子形态筛选流程的命令行入口，使其他成员不需要直接运行源码，只需要执行脚本即可启动批处理任务。
+
+运行方式：
+
+```text
+python scripts/run_morphology_screening.py --config configs/morphology.yaml
+```
+
+功能：
+
+- 读取命令行参数。
+- 调用批处理主流程。
+- 方便其他成员直接运行完整筛选流程。
+
+当前完成进度（全部完成）：
+
+- 已完成项目基础目录搭建，包括 `configs`、`src/sperm_morphology`、`scripts` 和 `outputs` 等目录。
+- 已完成 `morphology.yaml` 配置文件编写，统一管理数据路径、裁剪参数、预处理参数、分割参数和评分阈值。
+- 已完成 `dataset.py`，实现图像与标签读取、标签解析、异常情况记录以及统一样本格式输出。
+- 已完成 `crop.py`，实现 bbox 边界限制、ROI 扩展和裁剪，并提供全局坐标与局部坐标映射。
+- 已完成 `batch_run.py` 主流程框架，实现三个模块之间的接口连接和批处理逻辑。
+- 已完成 `run_morphology_screening.py`，提供项目统一运行入口。
+
+后续工作计划：
+
+- 与 qyt、ljr 模块进行整体联调。
+- 使用真实数据运行完整流程，检查 ROI 裁剪、mask 输出、特征计算和评分结果是否正常。
+- 根据测试结果优化异常处理和结果保存格式。

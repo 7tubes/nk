@@ -1,0 +1,49 @@
+data:
+  image_dir: "../SpermTracking/ImagesWithLabels/images"
+  label_dir: "../SpermTracking/ImagesWithLabels/labels"
+  output_dir: "outputs"
+
+
+calibration:
+  um_per_pixel: null
+
+
+crop:
+  margin_px: 16
+  min_box_width: 4
+  min_box_height: 4
+
+
+preprocess:
+  clahe_clip_limit: 2.0
+  clahe_tile_grid_size: 8
+  gaussian_kernel: 3
+  background_blur_kernel: 31
+
+
+segmentation:
+  min_head_area_px: 8
+  max_head_area_px: 800
+  min_contour_points: 5
+  use_adaptive_threshold: true
+
+
+scoring:
+  weights:
+    fit_goodness: 0.40
+    axis_ratio: 0.30
+    uniformity: 0.30
+
+  axis_ratio_target: 1.62
+  axis_ratio_tolerance: 0.35
+
+  fit_iou_good: 0.85
+  fit_iou_bad: 0.60
+
+  uniformity_good: 0.85
+  uniformity_bad: 0.60
+
+  grade_thresholds:
+    A: 85
+    B: 70
+    C: 55
