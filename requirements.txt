@@ -1,0 +1,5 @@
+numpy>=1.26
+opencv-python>=4.10
+PyYAML>=6.0
+streamlit>=1.30
+ultralytics>=8.0

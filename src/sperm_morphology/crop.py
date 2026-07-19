@@ -38,7 +38,7 @@ def expand_bbox(bbox, margin_px: int, image_width: int, image_height: int) -> li
     )
 
 
-def crop_roi(image, bbox, config: dict) -> dict:
+def crop_roi(image, bbox, config: dict, image_id: str | None = None, target_id: int | None = None) -> dict:
     """
     根据目标bbox裁剪ROI
 
@@ -87,5 +87,7 @@ def crop_roi(image, bbox, config: dict) -> dict:
     return {
         "roi": roi,
         "roi_bbox_global": [rx1, ry1, rx2, ry2],
-        "target_bbox_local": target_bbox_local
+        "target_bbox_local": target_bbox_local,
+        "image_id": image_id,
+        "target_id": target_id,
     }

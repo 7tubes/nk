@@ -70,12 +70,7 @@ def _safe_name(value):
     return str(value).replace("/", "_").replace("\\", "_").replace(" ", "_")
 
 
-def save_overlay(image, roi_info, head_mask, features, scores, config: dict | None = None) -> str:
-    """保存原图 overlay，并返回 overlay_path。"""
-    if config is None:
-        config = {}
-
-    canvas = _as_bgr(image)
+def _draw_detection(canvas, roi_info, head_mask, features, scores):
     roi_bbox = roi_info.get("roi_bbox_global", [0, 0, head_mask.shape[1], head_mask.shape[0]])
     rx1, ry1, rx2, ry2 = [int(round(v)) for v in roi_bbox]
 
@@ -135,16 +130,49 @@ def save_overlay(image, roi_info, head_mask, features, scores, config: dict | No
         cv2.LINE_AA,
     )
 
+
+def save_overlay(image, roi_info, head_mask, features, scores, config: dict | None = None) -> str:
+    """保存单个候选精子的 overlay，并返回 overlay_path。"""
+    if config is None:
+        config = {}
+
+    canvas = _as_bgr(image)
+    _draw_detection(canvas, roi_info, head_mask, features, scores)
+
     output_dir = _output_dir(config)
     image_id = _safe_name(roi_info.get("image_id", "sample"))
     target_id = _safe_name(roi_info.get("target_id", "target"))
 
+    grade = scores.get("grade", "NA")
+    total_score = float(scores.get("total_score", 0.0))
     if grade == "Reject":
         reason = _safe_name(scores.get("reject_reason", "reject"))
         filename = f"{image_id}_target{target_id}_Reject_{reason}.png"
     else:
         filename = f"{image_id}_target{target_id}_{grade}_{total_score:.1f}.png"
 
+    overlay_path = output_dir / filename
+    cv2.imwrite(str(overlay_path), canvas)
+    return str(overlay_path)
+
+
+def save_image_overlay(image, detections, config: dict | None = None, image_id: str | None = None) -> str:
+    """把一张图片中的所有检测结果绘制到同一张总 overlay 中。"""
+    if config is None:
+        config = {}
+
+    canvas = _as_bgr(image)
+    for detection in detections:
+        roi_info = detection.get("roi_info", {})
+        head_mask = detection.get("mask")
+        features = detection.get("features", {})
+        scores = detection.get("scores", {})
+        if head_mask is not None:
+            _draw_detection(canvas, roi_info, head_mask, features, scores)
+
+    output_dir = _output_dir(config)
+    image_name = _safe_name(image_id or "image")
+    filename = f"{image_name}_all_detections.png"
     overlay_path = output_dir / filename
     cv2.imwrite(str(overlay_path), canvas)
     return str(overlay_path)

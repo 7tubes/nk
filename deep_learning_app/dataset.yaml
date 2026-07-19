@@ -1,0 +1,6 @@
+path: "C:/Users/Lenovo/Desktop/\u5927\u521b/nk/deep_learning_app/dataset"
+train: images/train
+val: images/val
+nc: 1
+names:
+  - sperm
