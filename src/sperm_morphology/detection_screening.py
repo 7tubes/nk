@@ -235,9 +235,10 @@ def draw_screening_results(image: np.ndarray, screening_results: Iterable[dict])
     Draw red/yellow/green screening results on the original image.
 
     The detection bbox gets the traffic-light color, and a short label includes
-    the grade, score, and detector confidence. The head contour is drawn with
-    the same color when segmentation succeeds, making it easier to verify that
-    the morphology score came from the expected sperm head.
+    the grade, score, and detector confidence. The segmented head contour is
+    intentionally not drawn here, because noisy masks can make the review image
+    hard to read. Mask contours are still available through the saved mask and
+    debug overlay outputs when segmentation debugging is needed.
     """
     canvas = image.copy()
     for result in screening_results:
@@ -245,7 +246,6 @@ def draw_screening_results(image: np.ndarray, screening_results: Iterable[dict])
         x1, y1, x2, y2 = [int(round(value)) for value in result["bbox"]]
 
         cv2.rectangle(canvas, (x1, y1), (x2, y2), color, 2)
-        _draw_head_mask(canvas, result, color)
 
         scores = result.get("scores", {})
         grade = scores.get("grade", "Reject")

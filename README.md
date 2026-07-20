@@ -688,6 +688,7 @@ python scripts/run_detection_screening.py --image 28b9b3b6f49449007760d8213e1fcd
 - 绿色：形态评分较好，默认对应 A/B。
 - 黄色：形态可疑，默认对应 C。
 - 红色：形态较差或分割/评分失败，默认对应 D/Reject。
+- 可视化优化：为避免筛选阶段的 head_mask 分割轮廓在图上形成杂乱线条，当前三色筛选图只显示红/黄/绿方框、A/B/C/D/Reject 等级、总分和 YOLO 置信度；mask 轮廓仍可通过调试输出单独复核。
 
 4：`tests/test_detection_screening.py`
 
@@ -704,6 +705,7 @@ python scripts/run_detection_screening.py --image 28b9b3b6f49449007760d8213e1fcd
 - 已完成红、黄、绿三色筛选规则映射。
 - 已完成命令行单图测试入口。
 - 已完成 Streamlit 界面中的筛选颜色开关。
+- 已完成筛选结果显示优化：`Morphology screening colors` 开启后不再绘制 head_mask 轮廓，只保留红/黄/绿方框、等级、分数和 conf，便于汇报展示和人工复核。
 - 已完成结合逻辑的单元测试。
 
 后续工作计划：
