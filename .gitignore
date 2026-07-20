@@ -1,4 +1,8 @@
 .vscode/
+.venv/
+.ultralytics/
+yolo_config/
+Ultralytics/
 __pycache__/
 *.pyc
 outputs/

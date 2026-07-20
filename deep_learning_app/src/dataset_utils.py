@@ -2,12 +2,24 @@ import random
 import shutil
 from pathlib import Path
 
+import numpy as np
+
 ROOT = Path(__file__).resolve().parents[1]
 PROJECT_ROOT = ROOT.parent
 DATA_ROOT = PROJECT_ROOT.parent / "SpermTracking" / "ImagesWithLabels"
 IMAGE_DIR = DATA_ROOT / "images"
 LABEL_DIR = DATA_ROOT / "labels"
 DATASET_ROOT = ROOT / "dataset"
+
+
+def read_image_unicode(image_path):
+    """Read an image reliably on Windows paths that contain Chinese characters."""
+    import cv2
+
+    data = np.fromfile(str(image_path), dtype=np.uint8)
+    if data.size == 0:
+        return None
+    return cv2.imdecode(data, cv2.IMREAD_COLOR)
 
 
 def convert_bbox_to_yolo(box, image_w, image_h):
@@ -67,9 +79,7 @@ def write_yolo_label(boxes, dst_label, image_w, image_h):
 
 
 def convert_single_label(src_label, dst_label, image_path):
-    import cv2
-
-    img = cv2.imread(str(image_path))
+    img = read_image_unicode(image_path)
     if img is None:
         raise FileNotFoundError(f"cannot read image: {image_path}")
 
@@ -171,7 +181,7 @@ def convert_full_image(image_path, split):
 def convert_tiled_image(image_path, split, tile_size=512, overlap=0.25):
     import cv2
 
-    image = cv2.imread(str(image_path))
+    image = read_image_unicode(image_path)
     if image is None:
         raise FileNotFoundError(f"cannot read image: {image_path}")
 

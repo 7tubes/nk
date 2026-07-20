@@ -1,12 +1,27 @@
 import tempfile
+import os
+import sys
 from pathlib import Path
 
 import cv2
 import streamlit as st
-from ultralytics import YOLO
 
 ROOT = Path(__file__).resolve().parent
+PROJECT_ROOT = ROOT.parent
+SRC = PROJECT_ROOT / "src"
+if str(SRC) not in sys.path:
+    sys.path.insert(0, str(SRC))
+
+from sperm_morphology.dataset import load_config
+from sperm_morphology.detection_screening import draw_screening_results, screen_detections
+from sperm_morphology.utils import read_image_unicode
+
+os.environ.setdefault("YOLO_CONFIG_DIR", str(PROJECT_ROOT))
+
+from ultralytics import YOLO
+
 MODEL_PATH = ROOT / "runs" / "sperm_detection" / "weights" / "best.pt"
+MORPHOLOGY_CONFIG_PATH = PROJECT_ROOT / "configs" / "morphology.yaml"
 
 
 def tile_starts(length, tile_size, stride):
@@ -144,6 +159,7 @@ with st.sidebar:
     use_tiling = st.checkbox("Tiled inference", value=True)
     tile_size = st.select_slider("Tile size", options=[384, 512, 640], value=512)
     overlap = st.slider("Tile overlap", 0.00, 0.60, 0.25, 0.05)
+    run_morphology_screening = st.checkbox("Morphology screening colors", value=True)
 
 uploaded_file = st.file_uploader("Upload image or video", type=["jpg", "jpeg", "png", "mp4", "avi", "mov"])
 
@@ -154,7 +170,7 @@ if uploaded_file is not None:
         tmp_path.write_bytes(uploaded_file.read())
 
         if suffix in {".jpg", ".jpeg", ".png"}:
-            image = cv2.imread(str(tmp_path))
+            image = read_image_unicode(tmp_path)
             if image is None:
                 st.error("Failed to read image.")
                 st.stop()
@@ -170,13 +186,41 @@ if uploaded_file is not None:
                 tile_size,
                 overlap,
             )
-            annotated = draw_detections(image, detections)
+            if run_morphology_screening:
+                morphology_config = load_config(str(MORPHOLOGY_CONFIG_PATH))
+                screening_results = screen_detections(
+                    image,
+                    detections,
+                    morphology_config,
+                    image_id=Path(uploaded_file.name).stem,
+                )
+                annotated = draw_screening_results(image, screening_results)
+            else:
+                screening_results = []
+                annotated = draw_detections(image, detections)
             st.image(annotated, channels="BGR", use_container_width=True)
             st.write(f"Detected {len(detections)} targets")
 
-            for det in detections:
-                x1, y1, x2, y2 = det["xyxy"]
-                st.write(f"box ({x1:.1f}, {y1:.1f})-({x2:.1f}, {y2:.1f}), conf {det['conf']:.2f}")
+            if run_morphology_screening:
+                color_counts = {"green": 0, "yellow": 0, "red": 0}
+                for result in screening_results:
+                    color_counts[result["traffic_color"]] += 1
+                st.write(
+                    f"Green {color_counts['green']} | Yellow {color_counts['yellow']} | Red {color_counts['red']}"
+                )
+
+                for result in screening_results:
+                    x1, y1, x2, y2 = result["bbox"]
+                    scores = result["scores"]
+                    st.write(
+                        f"box ({x1:.1f}, {y1:.1f})-({x2:.1f}, {y2:.1f}), "
+                        f"conf {result['confidence']:.2f}, "
+                        f"{result['traffic_color']}, {scores['grade']} {scores['total_score']:.1f}"
+                    )
+            else:
+                for det in detections:
+                    x1, y1, x2, y2 = det["xyxy"]
+                    st.write(f"box ({x1:.1f}, {y1:.1f})-({x2:.1f}, {y2:.1f}), conf {det['conf']:.2f}")
 
         elif suffix in {".mp4", ".avi", ".mov"}:
             st.video(tmp_path.open("rb"))

@@ -2,6 +2,38 @@ import cv2
 import numpy as np
 
 
+def read_image_unicode(path, flags=cv2.IMREAD_COLOR):
+    """
+    Read an image from a path that may contain non-ASCII characters.
+
+    On Windows, cv2.imread can fail when the path contains Chinese characters.
+    Reading bytes with numpy first and then decoding through OpenCV avoids that
+    filesystem-path limitation while keeping the returned image unchanged.
+    """
+    data = np.fromfile(str(path), dtype=np.uint8)
+    if data.size == 0:
+        return None
+    return cv2.imdecode(data, flags)
+
+
+def write_image_unicode(path, image) -> bool:
+    """
+    Write an image to a path that may contain non-ASCII characters.
+
+    cv2.imwrite has the same Windows Unicode path limitation as cv2.imread.
+    Encoding the image in memory and writing the encoded bytes through numpy
+    keeps output reliable for usernames or folders containing Chinese text.
+    """
+    extension = str(path).rsplit(".", 1)[-1]
+    if not extension or extension == str(path):
+        extension = "png"
+    ok, encoded = cv2.imencode(f".{extension}", image)
+    if not ok:
+        return False
+    encoded.tofile(str(path))
+    return True
+
+
 def ensure_odd_kernel(value, default_value=3, minimum=1):
     """Return a positive odd kernel size for OpenCV operations."""
     try:

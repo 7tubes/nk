@@ -19,7 +19,9 @@ class DatasetUtilsTest(unittest.TestCase):
             dst_label = tmpdir_path / "dst.txt"
             image_path = tmpdir_path / "image.jpg"
             image = np.zeros((100, 100, 3), dtype=np.uint8)
-            cv2.imwrite(str(image_path), image)
+            ok, encoded = cv2.imencode(".jpg", image)
+            self.assertTrue(ok)
+            encoded.tofile(str(image_path))
             src_label.write_text("7 10 20 30 40\n12 1 2 3 4\n", encoding="utf-8")
 
             convert_single_label(src_label, dst_label, image_path)

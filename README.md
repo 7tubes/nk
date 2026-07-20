@@ -624,3 +624,89 @@ python scripts/run_morphology_screening.py --config configs/morphology.yaml
 - 与 qyt、ljr 模块进行整体联调。
 - 使用真实数据运行完整流程，检查 ROI 裁剪、mask 输出、特征计算和评分结果是否正常。
 - 根据测试结果优化异常处理和结果保存格式。
+
+7.20：ljr：
+
+今天主要完成深度学习“识别”结果与形态筛选结果的结合工作，并在本机建立独立 `.venv` 运行环境，安装和验证 `numpy`、`opencv-python`、`PyYAML`、`streamlit`、`ultralytics`、`torch` 等依赖。我的工作重点是把 YOLO 识别出来的精子检测框作为筛选流水线的新入口，让每一个识别框都能继续完成 ROI 裁剪、头部分割、形态特征计算、评分分级，并最终按照筛选质量映射成红、黄、绿三种颜色画回原图。
+
+目前主要编写和整理了以下 4 个部分：
+
+1：`src/sperm_morphology/detection_screening.py`
+
+作用：
+该文件负责把深度学习识别框和传统形态筛选模块连接起来，是本次“识别 + 筛选 + 三色可视化”的核心桥接层。
+
+核心函数：
+
+`screen_detection(image, detection, config, image_id, target_id)`
+
+输入：
+- `image`：原始整张显微图像。
+- `detection`：YOLO 或测试流程输出的单个检测框，格式中包含 `xyxy` 和 `conf`。
+- `config`：形态筛选配置字典。
+- `image_id`、`target_id`：用于追踪结果来源。
+
+主要处理流程：
+- 将 YOLO 检测框统一转换为 `[x1, y1, x2, y2]` 坐标。
+- 调用 `crop_roi()` 从原图中裁剪识别出来的精子候选 ROI。
+- 调用 `preprocess_roi()` 对 ROI 做灰度增强、去噪和背景校正。
+- 调用 `segment_head()` 分割精子头部 mask。
+- 调用 `compute_features()` 计算 L、W、R、SAS、LAS、HA、HD、fit_iou 和 uniformity 等形态指标。
+- 调用 `score_features()` 计算总分和 A/B/C/D/Reject 等级。
+- 调用 `grade_to_traffic_color()` 将等级映射为三色结果：A/B 为绿色，C 为黄色，D/Reject 为红色。
+
+输出：
+返回一个结果字典，包含检测框、识别置信度、头部 mask、形态特征、评分结果和最终三色标记。
+
+2：`scripts/run_detection_screening.py`
+
+作用：
+该脚本是命令行入口，用于读取单张 JPG/PNG 图片，运行 YOLO 识别并立刻接入形态筛选，最终输出一张带红黄绿标注的整图 overlay 和一份 CSV 结果表。
+
+运行方式：
+
+```powershell
+python scripts/run_detection_screening.py --image 28b9b3b6f49449007760d8213e1fcde6.jpg
+```
+
+如果当前电脑还没有训练好的 `best.pt` 权重，也可以先用手工框测试识别与筛选的结合链路：
+
+```powershell
+python scripts/run_detection_screening.py --image 28b9b3b6f49449007760d8213e1fcde6.jpg --bbox 100,100,140,140
+```
+
+输出位置：
+- `outputs/detection_screening/combined_overlay.png`
+- `outputs/detection_screening/combined_results.csv`
+
+3：`deep_learning_app/app.py`
+
+作用：
+在原有 Streamlit YOLO 识别界面中加入 `Morphology screening colors` 开关。开启后，上传图片的检测结果不再只显示绿色识别框，而是继续进入形态筛选模块，并按照筛选质量在原图上画出红、黄、绿三种颜色。
+
+界面效果：
+- 绿色：形态评分较好，默认对应 A/B。
+- 黄色：形态可疑，默认对应 C。
+- 红色：形态较差或分割/评分失败，默认对应 D/Reject。
+
+4：`tests/test_detection_screening.py`
+
+作用：
+新增结合逻辑的单元测试，使用合成图像和手工检测框验证：
+- A/B/C/D/Reject 能正确映射到红黄绿。
+- 单个识别框可以进入筛选流水线。
+- 最终 overlay 图片可以正常保存。
+
+当前完成进度：
+- 已完成本机 `.venv` 独立环境创建。
+- 已完成项目依赖安装，并验证 `cv2`、`yaml`、`streamlit`、`ultralytics` 可导入。
+- 已完成 YOLO 检测框到形态筛选模块的接口整合。
+- 已完成红、黄、绿三色筛选规则映射。
+- 已完成命令行单图测试入口。
+- 已完成 Streamlit 界面中的筛选颜色开关。
+- 已完成结合逻辑的单元测试。
+
+后续工作计划：
+- 将训练得到的 `deep_learning_app/runs/sperm_detection/weights/best.pt` 放入指定位置后，使用真实权重对 JPG 图片进行完整识别与筛选测试。
+- 根据真实 overlay 中红黄绿分布和人工复核结果，继续调整 `configs/morphology.yaml` 中的分割面积阈值、长宽比目标值和评分分界线。
+- 如果真实 YOLO 框偏小或偏大，需要同步调整检测置信度、NMS IoU 和形态筛选的 ROI margin。
