@@ -3,7 +3,7 @@ from pathlib import Path
 
 from ultralytics import YOLO
 
-from src.dataset_utils import convert_label_files
+from src.dataset_utils import DEFAULT_IMAGE_ROOT, DEFAULT_LABEL_ROOT, convert_label_files
 
 ROOT = Path(__file__).resolve().parent
 OUTPUT_DIR = ROOT / "runs"
@@ -24,6 +24,12 @@ def parse_args():
     parser.add_argument("--batch", type=int, default=4, help="batch size")
     parser.add_argument("--name", default="sperm_detection", help="run name under runs/")
     parser.add_argument("--seed", type=int, default=20260719, help="random split/training seed")
+    parser.add_argument("--image-root", default=str(DEFAULT_IMAGE_ROOT), help="source image root with split folders")
+    parser.add_argument("--label-root", default=str(DEFAULT_LABEL_ROOT), help="source label root with split folders")
+    parser.add_argument("--train-split", default="1", help="folder name used as training split")
+    parser.add_argument("--val-split", default="2", help="folder name used as validation/test split")
+    parser.add_argument("--label-format", choices=("auto", "yolo", "xyxy"), default="auto", help="source label format")
+    parser.add_argument("--random-split", action="store_true", help="randomly split one image/label folder instead of using 1/2")
     parser.add_argument("--val-ratio", type=float, default=0.2, help="validation image ratio")
     parser.add_argument("--device", default="auto", help="auto, cpu, or CUDA device id such as 0")
     parser.add_argument("--full-image", action="store_true", help="disable tile training")
@@ -37,11 +43,17 @@ def main():
     args = parse_args()
 
     dataset_yaml = convert_label_files(
+        image_root=args.image_root,
+        label_root=args.label_root,
+        train_split=args.train_split,
+        val_split=args.val_split,
         val_ratio=args.val_ratio,
         seed=args.seed,
         tile=not args.full_image,
         tile_size=args.tile_size,
         overlap=args.overlap,
+        label_format=args.label_format,
+        random_split=args.random_split,
     )
 
     if args.prepare_only:

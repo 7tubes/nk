@@ -20,8 +20,26 @@ os.environ.setdefault("YOLO_CONFIG_DIR", str(PROJECT_ROOT))
 
 from ultralytics import YOLO
 
-MODEL_PATH = ROOT / "runs" / "sperm_detection" / "weights" / "best.pt"
+DEFAULT_MODEL_PATH = ROOT / "runs" / "sperm_detection" / "weights" / "best.pt"
 MORPHOLOGY_CONFIG_PATH = PROJECT_ROOT / "configs" / "morphology.yaml"
+
+
+def resolve_model_path():
+    if DEFAULT_MODEL_PATH.exists():
+        return DEFAULT_MODEL_PATH
+
+    candidates = sorted(
+        (ROOT / "runs").glob("*/weights/best.pt"),
+        key=lambda path: path.stat().st_mtime,
+        reverse=True,
+    )
+    if candidates:
+        return candidates[0]
+
+    return DEFAULT_MODEL_PATH
+
+
+MODEL_PATH = resolve_model_path()
 
 
 def tile_starts(length, tile_size, stride):
