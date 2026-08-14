@@ -4,4 +4,4 @@ val: images/val
 test: images/val
 nc: 1
 names:
-  - sperm
+  - head

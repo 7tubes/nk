@@ -19,6 +19,12 @@ def _segmentation_config(config: dict | None) -> dict:
     return config.get("segmentation", config)
 
 
+def _deep_segmentation_config(config: dict | None) -> dict:
+    if config is None:
+        return {}
+    return config.get("deep_segmentation", {})
+
+
 def _binary_mask(mask):
     gray = normalize_gray_uint8(mask, name="mask")
     return (gray > 0).astype(np.uint8) * 255
@@ -312,6 +318,23 @@ def segment_head(roi_pre, target_bbox_local=None, config: dict | None = None):
     """
     输入预处理 ROI 和局部 bbox，输出最可靠的精子头部 mask 及质量信息。
     """
+    deep_config = _deep_segmentation_config(config)
+    if deep_config.get("enabled", False):
+        try:
+            from .deep_head_segmenter import segment_head_with_yolo
+        except ImportError:
+            try:
+                from deep_head_segmenter import segment_head_with_yolo
+            except ImportError:
+                segment_head_with_yolo = None
+
+        if segment_head_with_yolo is not None:
+            deep_mask, deep_quality = segment_head_with_yolo(roi_pre, target_bbox_local, config)
+            if deep_mask is not None:
+                return deep_mask, deep_quality
+            if not deep_config.get("fallback_to_traditional", True):
+                return deep_mask, deep_quality
+
     try:
         candidates = threshold_candidates(roi_pre, config)
     except (TypeError, ValueError) as exc:

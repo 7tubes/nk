@@ -783,3 +783,94 @@ python scripts/run_detection_screening.py --image 28b9b3b6f49449007760d8213e1fcd
 - 使用标准参数训练第一版 `G_stain2transparent` 模型，并重点观察 `checkpoints/samples/` 中的生成效果。
 - 将转换后的透明风格图像接入当前 YOLO 识别与形态筛选流程，比较转换前后检测框、头部分割和评分结果的稳定性。
 - 如果转换结果保留了头部结构，可以继续整理成图像和 mask 对齐的数据集，用于后续精子头部分割模型训练。
+
+8.13：dzh：
+
+今天主要完成精子形态筛选系统中“头部分割模块深度学习化”的第一版接入工作。由于之前尝试的精子风格转换方法在头部几何结构保留和跨域稳定性上效果不理想，本阶段先暂停风格转换路线，改为直接使用人工精确 polygon 标注训练头部实例分割模型。
+
+本次新增并整理了独立模块 `head_segmentation_app/`，用于把 LabelMe 标注数据转换成 YOLOv8-Seg 数据集。转换脚本只读取 `head` 类 polygon，忽略 `tail` 标注，输出格式为 `class_id x1 y1 x2 y2 ...` 的 YOLO segmentation 标签，并支持默认 tile 切片训练，提升小尺寸精子头部在训练输入中的相对占比。
+
+主要新增文件：
+
+1）`head_segmentation_app/src/labelme_to_yolo_seg.py`
+
+作用：
+- 读取 LabelMe JSON 与同名图片。
+- 筛选 `label == "head"` 的 polygon 标注。
+- 将 polygon 坐标归一化为 YOLOv8-Seg 格式。
+- 支持整图转换和 tile 切片转换。
+- 自动划分 train/val，并生成 `head_segmentation_app/dataset.yaml`。
+
+2）`head_segmentation_app/prepare_dataset.py`
+
+作用：
+- 提供数据集转换命令行入口。
+- 默认读取 `sperm_polygon_annotations_final`。
+- 默认输出到 `head_segmentation_app/dataset/`。
+
+运行方式：
+
+```powershell
+python head_segmentation_app\prepare_dataset.py --source-dir （你的路径）
+```
+
+3）`head_segmentation_app/train_yolo_seg.py`
+
+作用：
+- 提供 YOLOv8-Seg 训练入口。
+- 默认模型为 `yolov8n-seg.pt`。
+- 默认训练结果保存到 `head_segmentation_app/runs/sperm_head_seg/weights/best.pt`。
+
+运行方式：
+
+```powershell
+python head_segmentation_app\train_yolo_seg.py --model yolov8n-seg.pt --epochs 120 --imgsz 640 --batch 4 --name sperm_head_seg
+```
+
+4）`head_segmentation_app/infer_masks.py`
+
+作用：
+- 加载训练好的 YOLOv8-Seg 权重。
+- 对单张图片或整个目录生成头部 mask。
+- 保存 mask、overlay 和 `head_segmentation_features.csv`。
+- 直接复用现有 `compute_features()` 提取 `HA_px2`、`L_px`、`W_px`、`R`、`SAS`、`LAS`、`fit_iou`、`uniformity` 等形态指标。
+
+5）`src/sperm_morphology/deep_head_segmenter.py`
+
+作用：
+- 将 YOLOv8-Seg 推理结果转换成现有系统可直接使用的二值头部 mask。
+- 当模型输出多个 mask 时，根据目标框距离、面积、长宽比和模型置信度选择最像头部的结果。
+- 输出格式与传统 `segment_head()` 完全一致，后续特征计算、评分和可视化不需要改接口。
+
+6）`src/sperm_morphology/segment_head.py`
+
+本次改动：
+- 新增 `deep_segmentation` 配置入口。
+- 当配置开启且权重存在时，优先使用 YOLOv8-Seg 头部分割。
+- 如果深度模型权重不存在、推理失败或没有有效 mask，默认自动回退到原来的传统阈值分割，保证现有筛选流程仍可运行。
+
+配置文件 `configs/morphology.yaml` 新增：
+
+```yaml
+deep_segmentation:
+  enabled: false
+  model_path: "head_segmentation_app/runs/sperm_head_seg/weights/best.pt"
+  conf: 0.15
+  imgsz: 640
+  max_det: 8
+  fallback_to_traditional: true
+```
+
+当前完成进度：
+- 已完成 LabelMe Polygon 到 YOLOv8-Seg 数据格式转换模块。
+- 已完成 YOLOv8-Seg 训练入口。
+- 已完成独立 mask 推理与形态特征导出入口。
+- 已完成深度分割 mask 与现有形态筛选系统的接口衔接。
+- 已保留传统分割作为 fallback，避免权重未训练好时影响主流程。
+- 已新增 `head_segmentation_app/README.md` 中文说明文档，记录实现过程、运行命令、输出结果和接入方式。
+
+后续工作计划：
+- 在安装好 `opencv-python`、`ultralytics` 和合适 Python 版本后，先运行数据集转换并检查 YOLO-Seg 标签。
+- 训练第一版 `sperm_head_seg` 权重，重点观察验证集预测图中的头部 mask 是否贴合人工 polygon。
+- 将 `configs/morphology.yaml` 中 `deep_segmentation.enabled` 改为 `true`，用真实识别结果跑完整红/黄/绿筛选流程。
+- 根据深度 mask 统计结果重新校准头部面积、长宽比、拟合优度和均匀度阈值。

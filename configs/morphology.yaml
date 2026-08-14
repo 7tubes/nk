@@ -27,6 +27,14 @@ segmentation:
   min_contour_points: 5
   use_adaptive_threshold: true
 
+deep_segmentation:
+  enabled: true
+  model_path: "head_segmentation_app/runs/sperm_head_seg/weights/best.pt"
+  conf: 0.15
+  imgsz: 640
+  max_det: 8
+  fallback_to_traditional: true
+
 
 scoring:
   weights:

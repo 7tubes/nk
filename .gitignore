@@ -7,6 +7,7 @@ __pycache__/
 *.pyc
 outputs/
 yolov8n.pt
+yolov8n-seg.pt
 *.mp4
 *.avi
 *.mov
@@ -14,6 +15,17 @@ yolov8n.pt
 deep_learning_app/dataset/
 deep_learning_app/runs/
 deep_learning_app/*.pt
+head_segmentation_app/dataset/
+head_segmentation_app/runs/
+head_segmentation_app/outputs/
+head_segmentation_app/Ultralytics/
+head_segmentation_app/*.pt
+head_segmentation_app/datasets/*
+!head_segmentation_app/datasets/.gitkeep
+!head_segmentation_app/datasets/images/
+!head_segmentation_app/datasets/images/.gitkeep
+!head_segmentation_app/datasets/labelme/
+!head_segmentation_app/datasets/labelme/.gitkeep
 style_transfer_app/checkpoints/
 style_transfer_app/outputs/
 style_transfer_app/datasets/stain_heads/

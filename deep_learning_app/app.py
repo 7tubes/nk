@@ -1,6 +1,7 @@
 import tempfile
 import os
 import sys
+import csv
 from pathlib import Path
 
 import cv2
@@ -14,7 +15,7 @@ if str(SRC) not in sys.path:
 
 from sperm_morphology.dataset import load_config
 from sperm_morphology.detection_screening import draw_screening_results, screen_detections
-from sperm_morphology.utils import read_image_unicode
+from sperm_morphology.utils import read_image_unicode, write_image_unicode
 
 os.environ.setdefault("YOLO_CONFIG_DIR", str(PROJECT_ROOT))
 
@@ -22,6 +23,9 @@ from ultralytics import YOLO
 
 DEFAULT_MODEL_PATH = ROOT / "runs" / "sperm_detection" / "weights" / "best.pt"
 MORPHOLOGY_CONFIG_PATH = PROJECT_ROOT / "configs" / "morphology.yaml"
+DEFAULT_LOCAL_IMAGE_DIR = PROJECT_ROOT / "head_segmentation_app" / "datasets"
+SCREENING_OUTPUT_DIR = PROJECT_ROOT / "outputs" / "streamlit_screening"
+IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png"}
 
 
 def resolve_model_path():
@@ -153,6 +157,51 @@ def draw_detections(image, detections):
     return canvas
 
 
+def iter_local_images(image_dir: Path):
+    if not image_dir.exists():
+        return []
+    return sorted(path for path in image_dir.rglob("*") if path.suffix.lower() in IMAGE_EXTENSIONS)
+
+
+def screening_rows(screening_results):
+    rows = []
+    for result in screening_results:
+        scores = result.get("scores", {})
+        features = result.get("features", {})
+        rows.append(
+            {
+                "image_id": result.get("image_id", ""),
+                "target_id": result.get("target_id", ""),
+                "confidence": result.get("confidence", 0.0),
+                "traffic_color": result.get("traffic_color", ""),
+                "grade": scores.get("grade", "Reject"),
+                "total_score": scores.get("total_score", 0.0),
+                "reject_reason": scores.get("reject_reason", ""),
+                "fit_iou": features.get("fit_iou", ""),
+                "R": features.get("R", ""),
+                "uniformity": features.get("uniformity", ""),
+                "bbox": result.get("bbox", ""),
+            }
+        )
+    return rows
+
+
+def save_screening_outputs(image_id: str, annotated, screening_results):
+    SCREENING_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    overlay_path = SCREENING_OUTPUT_DIR / f"{image_id}_overlay.png"
+    csv_path = SCREENING_OUTPUT_DIR / f"{image_id}_results.csv"
+
+    write_image_unicode(overlay_path, annotated)
+    rows = screening_rows(screening_results)
+    fieldnames = list(rows[0].keys()) if rows else ["image_id"]
+    with csv_path.open("w", newline="", encoding="utf-8") as file:
+        writer = csv.DictWriter(file, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)
+
+    return overlay_path, csv_path, rows
+
+
 def run_detection(model, image, use_tiling, conf, iou, imgsz, max_det, tile_size, overlap):
     if use_tiling:
         return predict_tiled(model, image, conf, iou, imgsz, max_det, tile_size, overlap)
@@ -166,7 +215,13 @@ if not MODEL_PATH.exists():
 model = YOLO(str(MODEL_PATH))
 
 st.set_page_config(page_title="Sperm Detection", layout="wide")
-st.title("Sperm Detection")
+st.title("Sperm Detection + Morphology Screening")
+
+morphology_config = load_config(str(MORPHOLOGY_CONFIG_PATH))
+deep_config = morphology_config.get("deep_segmentation", {})
+deep_model_path = PROJECT_ROOT / deep_config.get("model_path", "")
+deep_enabled = bool(deep_config.get("enabled", False))
+deep_ready = deep_enabled and deep_model_path.exists()
 
 with st.sidebar:
     st.header("Detection Settings")
@@ -179,7 +234,70 @@ with st.sidebar:
     overlap = st.slider("Tile overlap", 0.00, 0.60, 0.25, 0.05)
     run_morphology_screening = st.checkbox("Morphology screening colors", value=True)
 
+    st.header("Morphology")
+    st.write(f"Config: `{MORPHOLOGY_CONFIG_PATH.relative_to(PROJECT_ROOT)}`")
+    if deep_ready:
+        st.success("Deep head segmentation: enabled")
+    elif deep_enabled:
+        st.warning("Deep head segmentation enabled, but model file is missing")
+    else:
+        st.info("Deep head segmentation: disabled")
+
+local_images = iter_local_images(DEFAULT_LOCAL_IMAGE_DIR)
+local_options = [""] + [str(path.relative_to(PROJECT_ROOT)) for path in local_images]
+selected_local_image = st.selectbox("Open local image", local_options)
 uploaded_file = st.file_uploader("Upload image or video", type=["jpg", "jpeg", "png", "mp4", "avi", "mov"])
+
+
+def process_image(image, image_id):
+    detections = run_detection(
+        model,
+        image,
+        use_tiling,
+        conf_threshold,
+        iou_threshold,
+        imgsz,
+        max_det,
+        tile_size,
+        overlap,
+    )
+    if run_morphology_screening:
+        screening_results = screen_detections(
+            image,
+            detections,
+            morphology_config,
+            image_id=image_id,
+        )
+        annotated = draw_screening_results(image, screening_results)
+    else:
+        screening_results = []
+        annotated = draw_detections(image, detections)
+
+    st.image(annotated, channels="BGR", use_container_width=True)
+    st.write(f"Detected {len(detections)} targets")
+
+    if run_morphology_screening:
+        overlay_path, csv_path, rows = save_screening_outputs(image_id, annotated, screening_results)
+        color_counts = {"green": 0, "yellow": 0, "red": 0}
+        for result in screening_results:
+            color_counts[result["traffic_color"]] += 1
+        st.write(f"Green {color_counts['green']} | Yellow {color_counts['yellow']} | Red {color_counts['red']}")
+        st.write(f"Overlay saved: `{overlay_path.relative_to(PROJECT_ROOT)}`")
+        st.write(f"CSV saved: `{csv_path.relative_to(PROJECT_ROOT)}`")
+        st.dataframe(rows, use_container_width=True)
+    else:
+        for det in detections:
+            x1, y1, x2, y2 = det["xyxy"]
+            st.write(f"box ({x1:.1f}, {y1:.1f})-({x2:.1f}, {y2:.1f}), conf {det['conf']:.2f}")
+
+
+if selected_local_image:
+    image_path = PROJECT_ROOT / selected_local_image
+    image = read_image_unicode(image_path)
+    if image is None:
+        st.error("Failed to read selected image.")
+    else:
+        process_image(image, image_path.stem)
 
 if uploaded_file is not None:
     suffix = Path(uploaded_file.name).suffix.lower()
@@ -193,52 +311,7 @@ if uploaded_file is not None:
                 st.error("Failed to read image.")
                 st.stop()
 
-            detections = run_detection(
-                model,
-                image,
-                use_tiling,
-                conf_threshold,
-                iou_threshold,
-                imgsz,
-                max_det,
-                tile_size,
-                overlap,
-            )
-            if run_morphology_screening:
-                morphology_config = load_config(str(MORPHOLOGY_CONFIG_PATH))
-                screening_results = screen_detections(
-                    image,
-                    detections,
-                    morphology_config,
-                    image_id=Path(uploaded_file.name).stem,
-                )
-                annotated = draw_screening_results(image, screening_results)
-            else:
-                screening_results = []
-                annotated = draw_detections(image, detections)
-            st.image(annotated, channels="BGR", use_container_width=True)
-            st.write(f"Detected {len(detections)} targets")
-
-            if run_morphology_screening:
-                color_counts = {"green": 0, "yellow": 0, "red": 0}
-                for result in screening_results:
-                    color_counts[result["traffic_color"]] += 1
-                st.write(
-                    f"Green {color_counts['green']} | Yellow {color_counts['yellow']} | Red {color_counts['red']}"
-                )
-
-                for result in screening_results:
-                    x1, y1, x2, y2 = result["bbox"]
-                    scores = result["scores"]
-                    st.write(
-                        f"box ({x1:.1f}, {y1:.1f})-({x2:.1f}, {y2:.1f}), "
-                        f"conf {result['confidence']:.2f}, "
-                        f"{result['traffic_color']}, {scores['grade']} {scores['total_score']:.1f}"
-                    )
-            else:
-                for det in detections:
-                    x1, y1, x2, y2 = det["xyxy"]
-                    st.write(f"box ({x1:.1f}, {y1:.1f})-({x2:.1f}, {y2:.1f}), conf {det['conf']:.2f}")
+            process_image(image, Path(uploaded_file.name).stem)
 
         elif suffix in {".mp4", ".avi", ".mov"}:
             st.video(tmp_path.open("rb"))
