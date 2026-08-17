@@ -6,6 +6,16 @@ Ultralytics/
 __pycache__/
 *.pyc
 outputs/
+*.pt
+*.pth
+*.onnx
+*.ckpt
+*.engine
+*.weights
+*.safetensors
+*.zip
+*.rar
+*.7z
 yolov8n.pt
 yolov8n-seg.pt
 *.mp4
@@ -23,8 +33,10 @@ head_segmentation_app/*.pt
 head_segmentation_app/datasets/*
 !head_segmentation_app/datasets/.gitkeep
 !head_segmentation_app/datasets/images/
+head_segmentation_app/datasets/images/*
 !head_segmentation_app/datasets/images/.gitkeep
 !head_segmentation_app/datasets/labelme/
+head_segmentation_app/datasets/labelme/*
 !head_segmentation_app/datasets/labelme/.gitkeep
 style_transfer_app/checkpoints/
 style_transfer_app/outputs/

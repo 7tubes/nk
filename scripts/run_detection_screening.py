@@ -175,6 +175,7 @@ def save_results_csv(screening_results: list[dict], output_csv: Path) -> None:
     for result in screening_results:
         scores = result.get("scores", {})
         features = result.get("features", {})
+        quality_info = result.get("quality_info", {})
         rows.append(
             {
                 "image_id": result.get("image_id", ""),
@@ -182,6 +183,7 @@ def save_results_csv(screening_results: list[dict], output_csv: Path) -> None:
                 "source": result.get("source", ""),
                 "confidence": result.get("confidence", 0.0),
                 "bbox": result.get("bbox", ""),
+                "head_bbox": result.get("head_bbox", ""),
                 "traffic_color": result.get("traffic_color", ""),
                 "grade": scores.get("grade", "Reject"),
                 "total_score": scores.get("total_score", 0.0),
@@ -189,6 +191,10 @@ def save_results_csv(screening_results: list[dict], output_csv: Path) -> None:
                 "fit_iou": features.get("fit_iou", ""),
                 "R": features.get("R", ""),
                 "uniformity": features.get("uniformity", ""),
+                "segmentation_method": quality_info.get("method", ""),
+                "head_id": quality_info.get("head_id", ""),
+                "head_confidence": quality_info.get("model_confidence", ""),
+                "head_model_path": quality_info.get("model_path", ""),
             }
         )
 

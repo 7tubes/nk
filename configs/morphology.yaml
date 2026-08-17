@@ -32,7 +32,11 @@ deep_segmentation:
   model_path: "head_segmentation_app/runs/sperm_head_seg/weights/best.pt"
   conf: 0.15
   imgsz: 640
-  max_det: 8
+  max_det: 300
+  full_image_tiling: true
+  tile_size: 320
+  overlap: 0.25
+  head_nms_iou: 0.45
   fallback_to_traditional: true
 
 

@@ -256,10 +256,7 @@ def convert_tiled_image(
 
 def write_dataset_yaml(dataset_dir: Path, class_names: tuple[str, ...]) -> Path:
     yaml_path = ROOT / "dataset.yaml"
-    try:
-        dataset_path = dataset_dir.resolve().relative_to(ROOT.resolve()).as_posix()
-    except ValueError:
-        dataset_path = dataset_dir.resolve().as_posix()
+    dataset_path = dataset_dir.resolve().as_posix()
     with yaml_path.open("w", encoding="utf-8") as file:
         file.write(f'path: "{dataset_path}"\n')
         file.write("train: images/train\n")
