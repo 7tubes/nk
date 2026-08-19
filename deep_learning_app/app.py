@@ -253,7 +253,11 @@ def annotate_frame(image, image_id):
             morphology_config,
             image_id=image_id,
         )
-        annotated = draw_screening_results(image, screening_results)
+        annotated = draw_screening_results(
+            image,
+            screening_results,
+            show_ellipse_axes=show_ellipse_axes,
+        )
     else:
         screening_results = []
         annotated = draw_detections(image, detections)
@@ -301,6 +305,7 @@ with st.sidebar:
     run_morphology_screening = st.checkbox("Morphology screening colors", value=True)
 
     st.header("Morphology")
+    show_ellipse_axes = st.checkbox("Show fitted ellipse and axes", value=True)
     st.write(f"Config: `{MORPHOLOGY_CONFIG_PATH.relative_to(PROJECT_ROOT)}`")
     if deep_ready:
         st.success("Deep head segmentation: enabled")

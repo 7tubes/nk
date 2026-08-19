@@ -101,6 +101,39 @@ class DetectionScreeningTests(unittest.TestCase):
         annotated = draw_screening_results(image, [result])
         self.assertTrue(np.array_equal(annotated[23, 24], np.array([0, 255, 255], dtype=np.uint8)))
 
+    def test_draw_screening_results_renders_fitted_ellipse_axes(self):
+        image = np.zeros((64, 64, 3), dtype=np.uint8)
+        mask = np.zeros((16, 16), dtype=np.uint8)
+        cv2.ellipse(mask, (8, 8), (5, 3), 0, 0, 360, 255, -1)
+
+        result = {
+            "bbox": [20, 18, 44, 40],
+            "head_bbox": [23, 23, 33, 29],
+            "confidence": 0.91,
+            "traffic_color": "green",
+            "scores": {"grade": "A", "total_score": 92.5},
+            "mask": mask,
+            "roi_info": {"roi_bbox_global": [20, 18, 36, 34]},
+            "features": {
+                "ellipse": {
+                    "center": [8.0, 8.0],
+                    "major_axis": 10.0,
+                    "minor_axis": 6.0,
+                    "angle": 0.0,
+                },
+                "L_px": 10.0,
+                "W_px": 6.0,
+            },
+        }
+
+        annotated = draw_screening_results(image, [result])
+        self.assertTrue(np.array_equal(annotated[26, 25], np.array([255, 255, 0], dtype=np.uint8)))
+        self.assertTrue(np.array_equal(annotated[23, 28], np.array([255, 0, 255], dtype=np.uint8)))
+
+        hidden = draw_screening_results(image, [result], show_ellipse_axes=False)
+        self.assertFalse(np.array_equal(hidden[26, 25], np.array([255, 255, 0], dtype=np.uint8)))
+        self.assertFalse(np.array_equal(hidden[23, 28], np.array([255, 0, 255], dtype=np.uint8)))
+
     def test_deep_segmentation_uses_full_image_head_candidates(self):
         image = np.full((96, 96, 3), 220, dtype=np.uint8)
         cv2.ellipse(image, (48, 48), (12, 7), 20, 0, 360, (40, 40, 40), -1)

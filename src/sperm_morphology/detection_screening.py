@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import copy
+import math
 from pathlib import Path
 from typing import Iterable
 
@@ -23,6 +24,10 @@ GRADE_COLORS_BGR = {
     "yellow": (0, 215, 255),
     "red": (0, 0, 255),
 }
+ELLIPSE_OUTLINE_BGR = (235, 235, 235)
+ELLIPSE_MAJOR_BGR = (255, 255, 0)
+ELLIPSE_MINOR_BGR = (255, 0, 255)
+ELLIPSE_CENTER_BGR = (255, 255, 255)
 
 
 @dataclass
@@ -406,13 +411,67 @@ def _draw_head_mask(canvas: np.ndarray, screening_result: dict, color: tuple[int
     cv2.drawContours(canvas, shifted, -1, color, 1)
 
 
-def draw_screening_results(image: np.ndarray, screening_results: Iterable[dict]) -> np.ndarray:
+def _draw_fitted_ellipse(canvas: np.ndarray, screening_result: dict) -> None:
+    features = screening_result.get("features") or {}
+    ellipse = features.get("ellipse") or {}
+    roi_info = screening_result.get("roi_info")
+    if not ellipse or roi_info is None:
+        return
+
+    try:
+        center_x, center_y = [float(v) for v in ellipse.get("center", [])[:2]]
+        major_axis = float(ellipse.get("major_axis", 0.0))
+        minor_axis = float(ellipse.get("minor_axis", 0.0))
+        angle = float(ellipse.get("angle", 0.0))
+    except (TypeError, ValueError):
+        return
+
+    if major_axis <= 0.0 or minor_axis <= 0.0:
+        return
+
+    roi_x1, roi_y1, _, _ = [int(round(value)) for value in roi_info["roi_bbox_global"]]
+    center = (int(round(center_x)) + roi_x1, int(round(center_y)) + roi_y1)
+    theta = math.radians(angle)
+    major_half = major_axis / 2.0
+    minor_half = minor_axis / 2.0
+    major_vec = np.array([math.cos(theta), math.sin(theta)], dtype=float) * major_half
+    minor_vec = np.array([-math.sin(theta), math.cos(theta)], dtype=float) * minor_half
+    major_start = (
+        int(round(center[0] - major_vec[0])),
+        int(round(center[1] - major_vec[1])),
+    )
+    major_end = (
+        int(round(center[0] + major_vec[0])),
+        int(round(center[1] + major_vec[1])),
+    )
+    minor_start = (
+        int(round(center[0] - minor_vec[0])),
+        int(round(center[1] - minor_vec[1])),
+    )
+    minor_end = (
+        int(round(center[0] + minor_vec[0])),
+        int(round(center[1] + minor_vec[1])),
+    )
+
+    ellipse_axes = (max(1, int(round(major_half))), max(1, int(round(minor_half))))
+    cv2.ellipse(canvas, center, ellipse_axes, angle, 0, 360, ELLIPSE_OUTLINE_BGR, 1, cv2.LINE_8)
+    cv2.line(canvas, major_start, major_end, ELLIPSE_MAJOR_BGR, 1, cv2.LINE_8)
+    cv2.line(canvas, minor_start, minor_end, ELLIPSE_MINOR_BGR, 1, cv2.LINE_8)
+    cv2.circle(canvas, center, 2, ELLIPSE_CENTER_BGR, -1, cv2.LINE_8)
+
+
+def draw_screening_results(
+    image: np.ndarray,
+    screening_results: Iterable[dict],
+    show_ellipse_axes: bool = True,
+) -> np.ndarray:
     """
     Draw red/yellow/green screening results on the original image.
 
-    The detection bbox gets the traffic-light color, the segmented head contour
-    is drawn in yellow, and a short label includes the grade, score, and
-    detector confidence.
+    The detection bbox gets the traffic-light color and the segmented head
+    contour is drawn in yellow. When requested, the fitted ellipse and its
+    long/short axis lines are drawn, but axis length labels are intentionally
+    hidden. A short label includes the grade, score, and detector confidence.
     """
     canvas = image.copy()
     for result in screening_results:
@@ -421,6 +480,8 @@ def draw_screening_results(image: np.ndarray, screening_results: Iterable[dict])
 
         cv2.rectangle(canvas, (x1, y1), (x2, y2), color, 2)
         _draw_head_mask(canvas, result, (0, 255, 255))
+        if show_ellipse_axes:
+            _draw_fitted_ellipse(canvas, result)
 
         scores = result.get("scores", {})
         grade = scores.get("grade", "Reject")
@@ -447,11 +508,12 @@ def save_screening_overlay(
     image: np.ndarray,
     screening_results: Iterable[dict],
     output_path: str | Path,
+    show_ellipse_axes: bool = True,
 ) -> str:
     """Save the combined recognition + morphology screening visualization."""
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    overlay = draw_screening_results(image, screening_results)
+    overlay = draw_screening_results(image, screening_results, show_ellipse_axes=show_ellipse_axes)
     if not write_image_unicode(output_path, overlay):
         raise OSError(f"failed to write overlay: {output_path}")
     return str(output_path)
